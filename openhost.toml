@@ -24,8 +24,8 @@ host_port = 9422
 [routing]
 # The knot's HTTP readiness is decoupled from OpenHost's probe: the
 # auth_proxy answers /_healthz locally the moment it binds, so the
-# container is marked alive even while the knot JVM/DB warms up or
-# before the owner DID is configured.
+# container is marked alive even while the knot (a Go service) and its
+# DB warm up, or before the owner DID is configured.
 health_check = "/_healthz"
 
 # The whole app is public.  Every HTTP surface the knot exposes is
