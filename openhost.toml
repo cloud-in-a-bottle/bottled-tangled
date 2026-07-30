@@ -1,0 +1,61 @@
+[app]
+name = "tangled"
+version = "0.1.0"
+description = "Self-hosted Tangled knot: the git data server for Tangled (tangled.org), the AT-Protocol-based social coding platform. Host your own repositories and federate with the Tangled network — the AppView provides the web UI, issues and pull requests as ATProto records, while your knot holds the actual git data. Identity is your ATProto/Bluesky DID; set KNOT_OWNER_DID to get started."
+authors = ["Andrew Laack <andrew@laack.co>"]
+
+[runtime.container]
+# auth_proxy listens on 8080 (the OpenHost-routed HTTP port) and
+# forwards to the knot on loopback 127.0.0.1:5555.
+image = "Dockerfile"
+port = 8080
+
+[[ports]]
+# git push is only supported over SSH (the knot rejects HTTP pushes).
+# Expose the container's sshd on a dedicated host port so users can
+# push with:  git remote set-url --push origin git@<zone-host>:<port>/...
+# Auth is by the pusher's ATProto-registered SSH keys (the knot's
+# `knot keys` AuthorizedKeysCommand fetches them from the AppView); no
+# knot-local accounts.  9422 is in the manifest's 9000-9999 range.
+label = "git-ssh"
+container_port = 22
+host_port = 9422
+
+[routing]
+# The knot's HTTP readiness is decoupled from OpenHost's probe: the
+# auth_proxy answers /_healthz locally the moment it binds, so the
+# container is marked alive even while the knot JVM/DB warms up or
+# before the owner DID is configured.
+health_check = "/_healthz"
+
+# The whole app is public.  Every HTTP surface the knot exposes is
+# machine-to-machine or public by nature and cannot perform OpenHost's
+# browser SSO:
+#   * git-over-HTTP clone/fetch  (/<did>/<repo>/info/refs, git-upload-pack)
+#   * ATProto XRPC federation API (/xrpc/*) — the AppView and other
+#     knots/clients call these to verify and sync your repos.
+#   * /events — the git oplog WebSocket the AppView subscribes to.
+#   * / — the knot's MOTD.
+# Gating any of these behind OpenHost login would break federation and
+# git access.  The knot enforces its own auth (ATProto DID + SSH keys
+# for push; service-auth JWTs for privileged XRPC); anonymous HTTP is
+# read-only, exactly as on tangled.org's own knots.
+public_paths = ["/"]
+
+[resources]
+# The knot is a lightweight Go service (git plumbing + a SQLite
+# metadata DB + sshd).  It is not memory-hungry; 1 GiB / 1 CPU is
+# comfortable for a personal/small-team knot.  Bump memory if you host
+# very large repositories (git pack operations are the main load).
+memory_mb = 1024
+cpu_millicores = 1000
+
+[data]
+# Persistent state under /data/app_data/tangled/:
+#   * repositories/  — bare git repos (the durable data; back this up).
+#   * knotserver.db  — knot metadata: members, collaborators, SSH-key
+#                      cache, federation oplog cursor.
+#   * keys/          — sshd host keys, so clients' known_hosts entries
+#                      stay valid across restarts and redeploys.
+app_data = true
+app_temp_data = true
