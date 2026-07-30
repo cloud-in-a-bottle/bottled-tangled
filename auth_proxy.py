@@ -112,14 +112,18 @@ def _esc(s: str) -> str:
     return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def _setup_html(hostname: str, is_owner: bool, error: str = "") -> bytes:
+def _setup_html(hostname: str, is_owner: bool, error: str = "", username: str = "") -> bytes:
     safe = _esc(hostname or "your-knot-domain")
+    user = _esc(username or "owner")
     err_html = f"<p class=\"err\">{_esc(error)}</p>" if error else ""
     if is_owner:
         # Owner sees an interactive form to set the DID right here.
+        # We greet them by the platform username inherited from OpenHost
+        # (OPENHOST_OWNER_USERNAME) so the SSO identity is visible.
         body_inner = (
             "<h1>Set your Tangled owner DID</h1>"
-            "<p>This is your self-hosted Tangled <b>knot</b> (git data server) at "
+            f"<p>Signed in as <b>{user}</b> via OpenHost SSO. "
+            "This is your self-hosted Tangled <b>knot</b> (git data server) at "
             f"<code>{safe}</code>. Tell it which ATProto identity owns it to start it.</p>"
             f"{err_html}"
             "<div class=\"box\">"
@@ -180,6 +184,7 @@ class KnotProxyHandler(BaseHTTPRequestHandler):
     sentinel_no_owner: str = ""
     knot_hostname: str = ""
     owner_did_file: str = ""
+    owner_username: str = "owner"
 
     def log_message(self, format: str, *args) -> None:  # noqa: A002, N802
         log.info("%s - " + format, self.address_string(), *args)
@@ -300,6 +305,7 @@ class KnotProxyHandler(BaseHTTPRequestHandler):
                 self.knot_hostname, is_owner=True,
                 error=f"That doesn't look like a valid DID: {did!r}. "
                 "Expected did:plc:... or did:web:...",
+                username=self.owner_username,
             )
             self._send_html(400, body)
             return
@@ -314,7 +320,8 @@ class KnotProxyHandler(BaseHTTPRequestHandler):
             self._send_html(
                 500,
                 _setup_html(self.knot_hostname, is_owner=True,
-                            error="Failed to save the DID on the server. Check logs."),
+                            error="Failed to save the DID on the server. Check logs.",
+                            username=self.owner_username),
             )
             return
         log.info("owner DID set to %s; requesting knot start", did)
@@ -368,7 +375,7 @@ class KnotProxyHandler(BaseHTTPRequestHandler):
         # OpenHost's readiness gate fail the deploy forever (the DID can
         # only be set after a successful deploy).  Owners get an
         # interactive form; non-owners get a plain explanation.
-        body = _setup_html(self.knot_hostname, is_owner=self._is_owner())
+        body = _setup_html(self.knot_hostname, is_owner=self._is_owner(), username=self.owner_username)
         self._send_html(200, body)
 
     def _proxy_websocket(self) -> None:
@@ -604,6 +611,9 @@ def main() -> int:
     KnotProxyHandler.owner_did_file = os.environ.get(
         "OPENHOST_TANGLED_OWNER_DID_FILE", ""
     ).strip()
+    KnotProxyHandler.owner_username = (
+        os.environ.get("OPENHOST_TANGLED_OWNER_USERNAME", "").strip() or "owner"
+    )
 
     try:
         server = IPv4ThreadingServer(("0.0.0.0", listen_port), KnotProxyHandler)

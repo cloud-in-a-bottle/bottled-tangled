@@ -38,6 +38,14 @@ SENTINEL_NO_OWNER="$PERSIST/.needs-owner-did"
 
 KNOT_HOSTNAME="${APP_NAME}.${ZONE_DOMAIN}"
 
+# Inherit the platform owner's username from OpenHost.  The router
+# injects OPENHOST_OWNER_USERNAME (the compute-space owner's chosen
+# name, defaulting to "owner").  We use it to personalize the
+# SSO-gated setup page and as the knot's default git author identity,
+# so the owner's platform identity flows through instead of a generic
+# placeholder.
+OWNER_USERNAME="${OPENHOST_OWNER_USERNAME:-owner}"
+
 mkdir -p "$REPO_DIR" "$KEYS_DIR"
 # The knot runs as the git user; it must own its data.
 chown -R git:git "$REPO_DIR" "$PERSIST" 2>/dev/null || true
@@ -95,9 +103,15 @@ export KNOT_SERVER_INTERNAL_LISTEN_ADDR='127.0.0.1:5444'
 export KNOT_SERVER_DB_PATH='${DB_PATH}'
 export KNOT_REPO_SCAN_PATH='${REPO_DIR}'
 export APPVIEW_ENDPOINT='${KNOT_APPVIEW_ENDPOINT:-https://tangled.org}'
+# The knot uses these as the default git author/committer identity for
+# server-side operations (e.g. merge commits it creates), inheriting
+# the platform owner's username.
+export KNOT_GIT_USER_NAME='${OWNER_USERNAME}'
+export KNOT_GIT_USER_EMAIL='${OWNER_USERNAME}@${KNOT_HOSTNAME}'
 export OPENHOST_TANGLED_SENTINEL_NO_OWNER='${SENTINEL_NO_OWNER}'
 export OPENHOST_TANGLED_HOSTNAME='${KNOT_HOSTNAME}'
 export OPENHOST_TANGLED_OWNER_DID_FILE='${OWNER_DID_FILE}'
+export OPENHOST_TANGLED_OWNER_USERNAME='${OWNER_USERNAME}'
 EOF
 chmod 0644 "$ENV_FILE"
 
