@@ -31,20 +31,30 @@ Bundled:
 
 ## Setup
 
-1. Deploy this app. On first boot it will show a setup page because it
-   doesn't yet know who owns it.
+1. Deploy this app. On first boot, opening the app URL (while signed in
+   to your OpenHost zone) shows a short setup form, because the knot
+   doesn't yet know which ATProto identity owns it.
 2. Find your ATProto DID: sign in at
    [tangled.org](https://tangled.org) with your Bluesky/ATProto account
    and open [Settings](https://tangled.org/settings) — it looks like
    `did:plc:xxxxxxxx`.
-3. Set the app's environment variable **`KNOT_OWNER_DID`** to that DID
-   (in your OpenHost dashboard), and reload the app.
+3. Paste that DID into the setup form and click **Save & start knot**.
+   The knot restarts with your identity and the page becomes your
+   knot's MOTD. (The DID is persisted to app data; you only do this
+   once. The form is owner-only — the OpenHost router stamps the owner,
+   and the DID cannot be set by anonymous visitors.)
 4. In [tangled.org → Settings → Knots](https://tangled.org/settings/knots),
    add your knot's domain (`tangled.<your-zone>`) and click **verify**.
    This publishes a record to your PDS announcing the knot, federating
    it with the network.
 5. Create repositories on your knot from the Tangled web UI, clone over
    HTTPS, and push over SSH.
+
+> Note: OpenHost doesn't (yet) expose custom app environment variables,
+> so the owner DID is configured through the in-app form above rather
+> than an env var. If a future OpenHost version does inject env vars, or
+> for a manual deploy, setting `KNOT_OWNER_DID` in the environment takes
+> precedence over the form.
 
 ### Cloning and pushing
 
@@ -91,11 +101,14 @@ There is no OpenHost SSO here because a knot has no browser login:
 
 ## Configuration
 
-Environment variables (set in the OpenHost dashboard):
+The owner DID is normally set through the in-app setup form (see
+Setup). If your OpenHost version supports app environment variables, or
+for a manual deploy, these are also honored (env takes precedence over
+the form):
 
 | Var | Required | Description |
 |-----|----------|-------------|
-| `KNOT_OWNER_DID` | yes | Your ATProto DID (`did:plc:…` or `did:web:…`). The knot won't start without it. |
+| `KNOT_OWNER_DID` | via form or env | Your ATProto DID (`did:plc:…` or `did:web:…`). The knot won't start until this is set. |
 | `KNOT_APPVIEW_ENDPOINT` | no | AppView to federate with (default `https://tangled.org`). |
 
 The knot's public hostname is derived automatically as
