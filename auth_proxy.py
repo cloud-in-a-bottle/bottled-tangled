@@ -65,6 +65,20 @@ MAX_BODY_BYTES = 512 * 1024 * 1024
 
 HEALTH_PATH = "/_healthz"
 
+# Owner-gated config endpoint: the setup form POSTs the ATProto owner
+# DID here.  Only requests the OpenHost router stamps as the owner
+# (X-OpenHost-Is-Owner: true) are accepted; the router sets this header
+# afresh on every request, and we strip client-supplied copies before
+# ever forwarding upstream, so it can't be forged.
+OWNER_HEADER_NAME = "X-OpenHost-Is-Owner"
+SET_OWNER_PATH = "/_openhost/set-owner"
+
+# A DID we accept for the knot owner.  Deliberately conservative:
+# did:plc:<base32ish> or did:web:<host...>.
+import re as _re  # noqa: E402
+
+_DID_RE = _re.compile(r"^did:(plc:[a-z2-7]{24}|web:[A-Za-z0-9.\-:%]+)$")
+
 logging.basicConfig(
     level=os.environ.get("AUTH_PROXY_LOG_LEVEL", "INFO"),
     format="[tangled-proxy] %(asctime)s %(levelname)s %(message)s",
@@ -79,36 +93,83 @@ def _strip_headers(
     return [(k, v) for k, v in headers if k.lower() not in drop_lower]
 
 
-def _setup_html(hostname: str) -> bytes:
-    safe = (hostname or "your-knot-domain").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+_STYLE = (
+    "<style>body{background:#0f1117;color:#e1e4e8;font-family:system-ui,sans-serif;"
+    "max-width:660px;margin:3rem auto;padding:0 1.2rem;line-height:1.6}"
+    "h1{font-size:1.5rem}code{background:#21262d;padding:.15em .4em;border-radius:6px;"
+    "font-family:ui-monospace,monospace}a{color:#58a6ff}ol{padding-left:1.2rem}"
+    "li{margin:.5rem 0}.box{background:#161b22;border:1px solid #30363d;border-radius:8px;"
+    "padding:1rem 1.2rem;margin:1rem 0}input[type=text]{width:100%;padding:.6em;"
+    "border-radius:6px;border:1px solid #30363d;background:#0d1117;color:#e1e4e8;"
+    "font-family:ui-monospace,monospace}button{margin-top:.8rem;padding:.6em 1.2em;"
+    "border-radius:6px;border:1px solid #2ea043;background:#238636;color:#fff;"
+    "font-size:1rem;cursor:pointer}.err{color:#f85149}.muted{color:#8b949e;font-size:.9rem}"
+    "</style>"
+)
+
+
+def _esc(s: str) -> str:
+    return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _setup_html(hostname: str, is_owner: bool, error: str = "") -> bytes:
+    safe = _esc(hostname or "your-knot-domain")
+    err_html = f"<p class=\"err\">{_esc(error)}</p>" if error else ""
+    if is_owner:
+        # Owner sees an interactive form to set the DID right here.
+        body_inner = (
+            "<h1>Set your Tangled owner DID</h1>"
+            "<p>This is your self-hosted Tangled <b>knot</b> (git data server) at "
+            f"<code>{safe}</code>. Tell it which ATProto identity owns it to start it.</p>"
+            f"{err_html}"
+            "<div class=\"box\">"
+            "<p>Find your DID: sign in at <a href=\"https://tangled.org\">tangled.org</a> "
+            "with your Bluesky/ATProto account, open "
+            "<a href=\"https://tangled.org/settings\">Settings</a>; it looks like "
+            "<code>did:plc:xxxxxxxxxxxxxxxxxxxxxxxx</code>.</p>"
+            f"<form method=\"POST\" action=\"{SET_OWNER_PATH}\">"
+            "<label for=\"did\">Owner DID</label>"
+            "<input type=\"text\" id=\"did\" name=\"did\" placeholder=\"did:plc:...\" "
+            "autocomplete=\"off\" spellcheck=\"false\" required>"
+            "<button type=\"submit\">Save & start knot</button>"
+            "</form></div>"
+            "<p class=\"muted\">After saving, the knot restarts and this page "
+            "becomes your knot's MOTD. Then add the knot at "
+            "<a href=\"https://tangled.org/settings/knots\">tangled.org → Settings → "
+            f"Knots</a> (domain <code>{safe}</code>) and click <b>verify</b> to "
+            "federate it.</p>"
+        )
+    else:
+        # Non-owner visitor: no form, just an explanation.
+        body_inner = (
+            "<h1>Tangled knot — not yet configured</h1>"
+            f"<p>This is a self-hosted Tangled knot at <code>{safe}</code>. Its owner "
+            "hasn't finished setting it up yet. If this is your knot, open it while "
+            "signed in to your OpenHost zone to configure it.</p>"
+        )
     return (
         "<!doctype html><html><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-        "<title>Tangled knot — setup</title>"
-        "<style>body{background:#0f1117;color:#e1e4e8;font-family:system-ui,sans-serif;"
-        "max-width:660px;margin:3rem auto;padding:0 1.2rem;line-height:1.6}"
-        "h1{font-size:1.5rem}code{background:#21262d;padding:.15em .4em;border-radius:6px;"
-        "font-family:ui-monospace,monospace}a{color:#58a6ff}ol{padding-left:1.2rem}"
-        "li{margin:.5rem 0}.box{background:#161b22;border:1px solid #30363d;border-radius:8px;"
-        "padding:1rem 1.2rem;margin:1rem 0}</style></head><body>"
-        "<h1>Almost there — set your Tangled owner DID</h1>"
-        "<p>This is your self-hosted Tangled <b>knot</b> (git data server) at "
-        f"<code>{safe}</code>. Before it can start, it needs to know which "
-        "ATProto identity owns it.</p>"
-        "<div class=\"box\"><ol>"
-        "<li>Find your DID: sign in at <a href=\"https://tangled.org\">tangled.org</a> "
-        "with your Bluesky/ATProto account and open "
-        "<a href=\"https://tangled.org/settings\">Settings</a> — your DID looks "
-        "like <code>did:plc:xxxxxxxx</code>.</li>"
-        "<li>In your OpenHost dashboard, set this app's environment variable "
-        "<code>KNOT_OWNER_DID</code> to that DID.</li>"
-        "<li>Reload the app.</li>"
-        "<li>Back in <a href=\"https://tangled.org/settings/knots\">tangled.org → "
-        "Settings → Knots</a>, add this knot's domain "
-        f"(<code>{safe}</code>) and click <b>verify</b> to federate it.</li>"
-        "</ol></div>"
-        "<p>Once verified, you can create repositories on this knot from the "
-        "Tangled web UI, clone them over HTTPS, and push over SSH.</p>"
+        f"<title>Tangled knot — setup</title>{_STYLE}</head><body>"
+        f"{body_inner}</body></html>"
+    ).encode("utf-8")
+
+
+def _saved_html(hostname: str) -> bytes:
+    safe = _esc(hostname or "your-knot-domain")
+    return (
+        "<!doctype html><html><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+        f"<title>Tangled knot — starting</title>"
+        "<meta http-equiv=\"refresh\" content=\"8\">"
+        f"{_STYLE}</head><body>"
+        "<h1>Owner DID saved — starting your knot…</h1>"
+        "<p>The knot is (re)starting with your identity. This page refreshes "
+        "automatically; in a few seconds it will become your knot's MOTD.</p>"
+        "<div class=\"box\"><p>Next: add this knot at "
+        "<a href=\"https://tangled.org/settings/knots\">tangled.org → Settings → "
+        f"Knots</a> (domain <code>{safe}</code>) and click <b>verify</b> to "
+        "federate it, then create repositories from the Tangled web UI.</p></div>"
         "</body></html>"
     ).encode("utf-8")
 
@@ -118,6 +179,7 @@ class KnotProxyHandler(BaseHTTPRequestHandler):
     upstream_port: int = 5555
     sentinel_no_owner: str = ""
     knot_hostname: str = ""
+    owner_did_file: str = ""
 
     def log_message(self, format: str, *args) -> None:  # noqa: A002, N802
         log.info("%s - " + format, self.address_string(), *args)
@@ -155,6 +217,9 @@ class KnotProxyHandler(BaseHTTPRequestHandler):
     def _owner_missing(self) -> bool:
         return bool(self.sentinel_no_owner) and os.path.exists(self.sentinel_no_owner)
 
+    def _is_owner(self) -> bool:
+        return self.headers.get(OWNER_HEADER_NAME, "").lower() == "true"
+
     def _dispatch(self) -> None:
         try:
             self.connection.settimeout(CLIENT_READ_TIMEOUT_SECONDS)
@@ -163,24 +228,22 @@ class KnotProxyHandler(BaseHTTPRequestHandler):
 
         path = self._path_only()
 
-        if path == "/_dbg_owner":
-            hv = self.headers.get("X-OpenHost-Is-Owner", "<none>")
-            body = ("owner=" + hv).encode()
-            self.send_response(200); self.send_header("Content-Length", str(len(body)))
-            self.send_header("Content-Type","text/plain"); self.end_headers()
-            if self.command!="HEAD": self.wfile.write(body)
-            return
-
         if path == HEALTH_PATH:
             self._serve_health()
             return
 
+        # Owner submits their DID here.  Owner-only, and only meaningful
+        # while the knot is unconfigured.
+        if path == SET_OWNER_PATH:
+            self._handle_set_owner()
+            return
+
         # If the owner DID isn't configured, the knot isn't running.
-        # Serve the 200 setup page for the app root and any GET/HEAD
-        # navigation (this also satisfies OpenHost's readiness probe,
-        # which polls GET / with Accept: */*).  Return 503 only for
-        # non-idempotent or clearly machine/git/XRPC requests, where a
-        # 503 correctly signals "backend not up yet".
+        # Serve the 200 setup page (an owner-gated form) for the app
+        # root and any GET/HEAD navigation.  This also satisfies
+        # OpenHost's readiness probe, which polls GET / with Accept:
+        # */*.  Return 503 only for clearly machine/git/XRPC requests,
+        # where a 503 correctly signals "backend not up yet".
         if self._owner_missing():
             is_git_or_api = (
                 path.startswith("/xrpc")
@@ -193,7 +256,7 @@ class KnotProxyHandler(BaseHTTPRequestHandler):
             if self.command in ("GET", "HEAD") and not is_git_or_api:
                 self._serve_setup()
             else:
-                self._safe_send_error(503, "knot not configured: set KNOT_OWNER_DID")
+                self._safe_send_error(503, "knot not configured: set owner DID")
             return
 
         # WebSocket (/events) → tunnel.
@@ -203,6 +266,86 @@ class KnotProxyHandler(BaseHTTPRequestHandler):
             return
 
         self._proxy()
+
+    def _handle_set_owner(self) -> None:
+        # Only the OpenHost-authenticated owner may set the DID.  The
+        # router stamps X-OpenHost-Is-Owner fresh; forged copies are
+        # stripped before any upstream forward, so this is trustworthy.
+        if self.command != "POST":
+            self._safe_send_error(405, "method not allowed")
+            return
+        if not self._is_owner():
+            self._safe_send_error(403, "owner only")
+            return
+        # Read a small form body.
+        try:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+        except ValueError:
+            self._safe_send_error(400, "invalid Content-Length")
+            return
+        if length <= 0 or length > 4096:
+            self._safe_send_error(400, "invalid body")
+            return
+        try:
+            raw = self.rfile.read(length).decode("utf-8", "replace")
+        except (OSError, TimeoutError):
+            self._safe_send_error(400, "body read failed")
+            return
+        # application/x-www-form-urlencoded: did=...
+        import urllib.parse
+
+        did = urllib.parse.parse_qs(raw).get("did", [""])[0].strip()
+        if not _DID_RE.match(did):
+            body = _setup_html(
+                self.knot_hostname, is_owner=True,
+                error=f"That doesn't look like a valid DID: {did!r}. "
+                "Expected did:plc:... or did:web:...",
+            )
+            self._send_html(400, body)
+            return
+        # Persist the DID for openhost-init to pick up on next start.
+        try:
+            if not self.owner_did_file:
+                raise OSError("owner_did_file not configured")
+            with open(self.owner_did_file, "w", encoding="utf-8") as fh:
+                fh.write(did + "\n")
+        except OSError as exc:
+            log.error("failed to persist owner DID: %s", exc)
+            self._send_html(
+                500,
+                _setup_html(self.knot_hostname, is_owner=True,
+                            error="Failed to save the DID on the server. Check logs."),
+            )
+            return
+        log.info("owner DID set to %s; requesting knot start", did)
+        # Show a friendly "starting" page, then exit the proxy so the
+        # supervisor (start.sh) restarts the whole container, which
+        # re-runs openhost-init, reads the persisted DID, and launches
+        # the knot.
+        self._send_html(200, _saved_html(self.knot_hostname))
+        # Give the response time to flush before we exit.
+        import threading
+
+        def _bail():
+            import time
+            time.sleep(1.0)
+            log.info("exiting proxy to trigger container restart with owner DID")
+            os._exit(0)
+
+        threading.Thread(target=_bail, daemon=True).start()
+
+    def _send_html(self, code: int, body: bytes) -> None:
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(body)
+        except OSError as exc:
+            log.debug("client disconnected during html response: %s", exc)
 
     def _serve_health(self) -> None:
         body = b"ok\n"
@@ -221,21 +364,12 @@ class KnotProxyHandler(BaseHTTPRequestHandler):
     def _serve_setup(self) -> None:
         # Serve the setup page with a 200, not a 5xx.  The container is
         # genuinely alive and this page is the correct, actionable
-        # response until the operator sets KNOT_OWNER_DID; returning a
-        # 5xx here would make OpenHost's readiness gate fail the deploy
-        # forever (the DID can only be set after a successful deploy).
-        body = _setup_html(self.knot_hostname)
-        try:
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Connection", "close")
-            self.end_headers()
-            if self.command != "HEAD":
-                self.wfile.write(body)
-        except OSError as exc:
-            log.debug("client disconnected during setup response: %s", exc)
+        # response until the owner DID is set; a 5xx here would make
+        # OpenHost's readiness gate fail the deploy forever (the DID can
+        # only be set after a successful deploy).  Owners get an
+        # interactive form; non-owners get a plain explanation.
+        body = _setup_html(self.knot_hostname, is_owner=self._is_owner())
+        self._send_html(200, body)
 
     def _proxy_websocket(self) -> None:
         cleaned_headers = _strip_headers(self.headers.items(), ALWAYS_STRIP_HEADERS)
@@ -466,6 +600,9 @@ def main() -> int:
     ).strip()
     KnotProxyHandler.knot_hostname = os.environ.get(
         "OPENHOST_TANGLED_HOSTNAME", ""
+    ).strip()
+    KnotProxyHandler.owner_did_file = os.environ.get(
+        "OPENHOST_TANGLED_OWNER_DID_FILE", ""
     ).strip()
 
     try:

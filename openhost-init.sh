@@ -45,14 +45,18 @@ chown -R git:git "$REPO_DIR" "$PERSIST" 2>/dev/null || true
 # ----------------------------------------------------------------------
 # Owner DID
 # ----------------------------------------------------------------------
-# The operator sets KNOT_OWNER_DID via OpenHost app env to their ATProto
-# DID (find it at https://tangled.org/settings, or it's your Bluesky
-# account DID, e.g. did:plc:xxxx;  did:web:example.com is also valid).
-OWNER_DID="${KNOT_OWNER_DID:-}"
+# The knot's owner is an ATProto DID.  OpenHost has no user-env-var
+# mechanism, so we source the DID, in priority order, from:
+#   1. KNOT_OWNER_DID / KNOT_SERVER_OWNER / OWNER env (if a future
+#      OpenHost version or a manual deploy provides one), else
+#   2. the persisted owner-did file that the auth_proxy writes when the
+#      owner submits it through the setup form at the app URL.
+# This makes the normal flow "deploy → open app → paste your DID".
+OWNER_DID_FILE="$PERSIST/owner-did"
+OWNER_DID="${KNOT_OWNER_DID:-${KNOT_SERVER_OWNER:-${OWNER:-}}}"
 
-# Accept a couple of obvious aliases operators might use.
-if [[ -z "$OWNER_DID" ]]; then
-    OWNER_DID="${KNOT_SERVER_OWNER:-${OWNER:-}}"
+if [[ -z "$OWNER_DID" && -f "$OWNER_DID_FILE" ]]; then
+    OWNER_DID="$(head -n1 "$OWNER_DID_FILE" | tr -d '[:space:]')"
 fi
 
 rm -f "$SENTINEL_NO_OWNER"
@@ -93,6 +97,7 @@ export KNOT_REPO_SCAN_PATH='${REPO_DIR}'
 export APPVIEW_ENDPOINT='${KNOT_APPVIEW_ENDPOINT:-https://tangled.org}'
 export OPENHOST_TANGLED_SENTINEL_NO_OWNER='${SENTINEL_NO_OWNER}'
 export OPENHOST_TANGLED_HOSTNAME='${KNOT_HOSTNAME}'
+export OPENHOST_TANGLED_OWNER_DID_FILE='${OWNER_DID_FILE}'
 EOF
 chmod 0644 "$ENV_FILE"
 
