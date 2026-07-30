@@ -163,6 +163,14 @@ class KnotProxyHandler(BaseHTTPRequestHandler):
 
         path = self._path_only()
 
+        if path == "/_dbg_owner":
+            hv = self.headers.get("X-OpenHost-Is-Owner", "<none>")
+            body = ("owner=" + hv).encode()
+            self.send_response(200); self.send_header("Content-Length", str(len(body)))
+            self.send_header("Content-Type","text/plain"); self.end_headers()
+            if self.command!="HEAD": self.wfile.write(body)
+            return
+
         if path == HEALTH_PATH:
             self._serve_health()
             return
