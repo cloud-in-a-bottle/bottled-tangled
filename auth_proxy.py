@@ -200,13 +200,17 @@ class KnotProxyHandler(BaseHTTPRequestHandler):
             log.debug("client disconnected during health response: %s", exc)
 
     def _serve_setup(self) -> None:
+        # Serve the setup page with a 200, not a 5xx.  The container is
+        # genuinely alive and this page is the correct, actionable
+        # response until the operator sets KNOT_OWNER_DID; returning a
+        # 5xx here would make OpenHost's readiness gate fail the deploy
+        # forever (the DID can only be set after a successful deploy).
         body = _setup_html(self.knot_hostname)
         try:
-            self.send_response(503)
+            self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
-            self.send_header("Retry-After", "30")
             self.send_header("Connection", "close")
             self.end_headers()
             if self.command != "HEAD":
