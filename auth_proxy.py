@@ -168,10 +168,21 @@ class KnotProxyHandler(BaseHTTPRequestHandler):
             return
 
         # If the owner DID isn't configured, the knot isn't running.
-        # Serve the setup page on HTML navigations; 503 everything else.
+        # Serve the 200 setup page for the app root and any GET/HEAD
+        # navigation (this also satisfies OpenHost's readiness probe,
+        # which polls GET / with Accept: */*).  Return 503 only for
+        # non-idempotent or clearly machine/git/XRPC requests, where a
+        # 503 correctly signals "backend not up yet".
         if self._owner_missing():
-            accept = self.headers.get("Accept", "").lower()
-            if self.command in ("GET", "HEAD") and "text/html" in accept:
+            is_git_or_api = (
+                path.startswith("/xrpc")
+                or path.startswith("/admin")
+                or path.endswith("/info/refs")
+                or "git-upload-pack" in path
+                or "git-receive-pack" in path
+                or "git-upload-archive" in path
+            )
+            if self.command in ("GET", "HEAD") and not is_git_or_api:
                 self._serve_setup()
             else:
                 self._safe_send_error(503, "knot not configured: set KNOT_OWNER_DID")
