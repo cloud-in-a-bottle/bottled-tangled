@@ -69,7 +69,19 @@ Bundled:
 
 ## Auth / federation model
 
-There is no OpenHost SSO here because a knot has no browser login:
+**OpenHost SSO gates configuration; your platform username is
+inherited.** The one owner-facing action on the knot — setting the
+ATProto owner DID — is behind OpenHost SSO: the setup form is served
+only to the authenticated zone owner (the router stamps
+`X-OpenHost-Is-Owner`), greets you by your OpenHost username
+(`OPENHOST_OWNER_USERNAME`), and rejects anonymous attempts to set the
+owner. That same username is inherited as the knot's default git
+author/committer identity (`KNOT_GIT_USER_NAME` / `..._EMAIL`) for
+server-side commits.
+
+Beyond that, a knot deliberately has **no browser login of its own** —
+Tangled's whole identity layer is ATProto (your Bluesky DID), decoupled
+from any hosting platform:
 
 - **HTTP is public** (`public_paths = ["/"]`). git-over-HTTP
   clone/fetch, the `/xrpc/*` federation API, the `/events` oplog
@@ -81,6 +93,13 @@ There is no OpenHost SSO here because a knot has no browser login:
   (`knot keys`) fetches the pushing user's registered SSH public keys
   from the AppView by DID, so only keys tied to authorized ATProto
   identities can push. No knot-local accounts or passwords.
+
+Note on the owner DID: it can't be auto-derived from your OpenHost
+account, because it must be a real ATProto identity (with a PDS and
+published SSH-key records) that the Tangled network can verify. The
+platform username is inherited for display and git-author identity, but
+the DID is your own Bluesky/ATProto identity, entered once via the
+SSO-gated form.
 
 ## Architecture
 
