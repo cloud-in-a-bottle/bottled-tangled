@@ -18,7 +18,8 @@ Its jobs are:
 
   * Otherwise transparently forward everything to the knot on
     127.0.0.1:5555, including the ``/events`` WebSocket (tunnelled) and
-    git-over-HTTP requests (streamed with correct Content-Length).
+    git-over-HTTP requests (buffered, then re-sent with a correct
+    Content-Length; capped at MAX_BODY_BYTES).
 
 The whole app is public in openhost.toml (git + federation clients
 can't perform OpenHost's browser SSO), so we don't gate anything here;
