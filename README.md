@@ -1,8 +1,8 @@
-# openhost-tangled
+# bottled-tangled
 
 A self-hosted [Tangled](https://tangled.org) **knot** — the git data
 server for Tangled, the AT-Protocol-based social coding platform —
-packaged for OpenHost.
+packaged for Cloud in a Bottle.
 
 ## What this is
 
@@ -15,7 +15,7 @@ the [AT Protocol](https://atproto.com/) (the same protocol as Bluesky):
 - A **knot** holds the actual git repositories and serves them. Anyone
   can run one.
 
-This app runs **your own knot**. Your repos live on your OpenHost
+This app runs **your own knot**. Your repos live on your Cloud in a Bottle
 instance; you keep using `tangled.org` (or any AppView) for the web UI,
 and it federates with your knot. Your identity is your ATProto DID
 (e.g. your Bluesky account) — there are no knot-local accounts.
@@ -25,14 +25,14 @@ Bundled:
 - **knot** — the upstream Go git data server (built from source, pinned
   release).
 - **sshd** — for `git push` (the knot only accepts pushes over SSH).
-- **auth_proxy.py** — the OpenHost HTTP seam: health probe, a setup
+- **auth_proxy.py** — the Cloud in a Bottle HTTP seam: health probe, a setup
   page until you configure your owner DID, and a transparent forward to
   the knot.
 
 ## Setup
 
 1. Deploy this app. On first boot, opening the app URL (while signed in
-   to your OpenHost zone) shows a short setup form, because the knot
+   to your Cloud in a Bottle zone) shows a short setup form, because the knot
    doesn't yet know which ATProto identity owns it.
 2. Find your ATProto DID: sign in at
    [tangled.org](https://tangled.org) with your Bluesky/ATProto account
@@ -41,7 +41,7 @@ Bundled:
 3. Paste that DID into the setup form and click **Save & start knot**.
    The knot restarts with your identity and the page becomes your
    knot's MOTD. (The DID is persisted to app data; you only do this
-   once. The form is owner-only — the OpenHost router stamps the owner,
+   once. The form is owner-only — the Cloud in a Bottle router stamps the owner,
    and the DID cannot be set by anonymous visitors.)
 4. In [tangled.org → Settings → Knots](https://tangled.org/settings/knots),
    add your knot's domain (`tangled.<your-zone>`) and click **verify**.
@@ -50,9 +50,9 @@ Bundled:
 5. Create repositories on your knot from the Tangled web UI, clone over
    HTTPS, and push over SSH.
 
-> Note: OpenHost doesn't (yet) expose custom app environment variables,
+> Note: Cloud in a Bottle doesn't (yet) expose custom app environment variables,
 > so the owner DID is configured through the in-app form above rather
-> than an env var. If a future OpenHost version does inject env vars, or
+> than an env var. If a future Cloud in a Bottle version does inject env vars, or
 > for a manual deploy, setting `KNOT_OWNER_DID` in the environment takes
 > precedence over the form.
 
@@ -69,11 +69,11 @@ Bundled:
 
 ## Auth / federation model
 
-**OpenHost SSO gates configuration; your platform username is
+**Cloud in a Bottle SSO gates configuration; your platform username is
 inherited.** The one owner-facing action on the knot — setting the
-ATProto owner DID — is behind OpenHost SSO: the setup form is served
+ATProto owner DID — is behind Cloud in a Bottle SSO: the setup form is served
 only to the authenticated zone owner (the router stamps
-`X-OpenHost-Is-Owner`), greets you by your OpenHost username
+`X-OpenHost-Is-Owner`), greets you by your Cloud in a Bottle username
 (`OPENHOST_OWNER_USERNAME`), and rejects anonymous attempts to set the
 owner. That same username is inherited as the knot's default git
 author/committer identity (`KNOT_GIT_USER_NAME` / `..._EMAIL`) for
@@ -94,7 +94,7 @@ from any hosting platform:
   from the AppView by DID, so only keys tied to authorized ATProto
   identities can push. No knot-local accounts or passwords.
 
-Note on the owner DID: it can't be auto-derived from your OpenHost
+Note on the owner DID: it can't be auto-derived from your Cloud in a Bottle
 account, because it must be a real ATProto identity (with a PDS and
 published SSH-key records) that the Tangled network can verify. The
 platform username is inherited for display and git-author identity, but
@@ -121,7 +121,7 @@ SSO-gated form.
 ## Configuration
 
 The owner DID is normally set through the in-app setup form (see
-Setup). If your OpenHost version supports app environment variables, or
+Setup). If your Cloud in a Bottle version supports app environment variables, or
 for a manual deploy, these are also honored (env takes precedence over
 the form):
 
@@ -148,7 +148,7 @@ No passwords or long-lived secrets are written to disk.
 ## Known limitations / scope cuts
 
 - **No spindle (CI).** Tangled's CI runner (`spindle`) needs NixOS
-  microVMs and is out of scope for a single OpenHost container. Repos,
+  microVMs and is out of scope for a single Cloud in a Bottle container. Repos,
   issues, and pull requests all work without it.
 - **Alpha software.** Tangled is alpha; the knot protocol still changes
   between releases (see the pinned `KNOT_TAG` in the Dockerfile).
@@ -158,7 +158,7 @@ No passwords or long-lived secrets are written to disk.
 
 ## Files
 
-- `openhost.toml` — OpenHost manifest (HTTP via router; SSH via `[[ports]]`).
+- `openhost.toml` — Cloud in a Bottle manifest (HTTP via router; SSH via `[[ports]]`).
 - `Dockerfile` — builds the knot binary; installs sshd + git.
 - `openhost-init.sh` — first-boot init: hostname/owner, persistent dirs,
   sshd host keys, env file.
