@@ -48,6 +48,11 @@ public_paths = ["/"]
 # comfortable for a personal/small-team knot.  Bump memory if you host
 # very large repositories (git pack operations are the main load).
 memory_mb = 1024
+# Measured clean --no-cache build peak ~4528 MiB (4.42 GiB), from a Go
+# build in the builder stage. Runtime memory_mb (1024) is lower, so
+# without an explicit build cap the build can OOM. Sized to the measured
+# peak rounded up to the next 0.5 GiB.
+build_memory_mb = 4608
 cpu_millicores = 1000
 
 [data]
