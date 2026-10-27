@@ -58,16 +58,21 @@ def test_owner_sets_the_did_and_the_knot_starts(stack: OpenhostStack) -> None:
     saved = stack.owner_session.post(f"{stack.url}/_openhost/set-owner", data={"did": OWNER_DID}, timeout=30)
     assert saved.status_code == 200 and "Owner DID saved" in saved.text, f"{saved.status_code}: {saved.text[:500]}"
 
-    # The proxy exits so the container restarts with the DID; the knot then reports it over public XRPC.
+    # The proxy exits so the container restarts with the DID; the knot then reports it over XRPC.
     owner = _poll(
         stack,
         "knot did not come up reporting the owner DID",
-        lambda: requests.get(f"{stack.url}/xrpc/sh.tangled.owner", timeout=30),
+        lambda: stack.owner_session.get(f"{stack.url}/xrpc/sh.tangled.owner", timeout=30),
         lambda r: r.status_code == 200,
     )
     assert owner.json() == {"owner": OWNER_DID}, owner.text[:300]
-    motd = requests.get(f"{stack.url}/", timeout=30)
-    assert motd.status_code == 200 and "setup" not in motd.text.lower(), f"{motd.status_code}: {motd.text[:500]}"
+
+    # Federation (the AppView, other knots) and git clients call these anonymously.
+    for path in ("/xrpc/sh.tangled.owner", "/"):
+        public = requests.get(f"{stack.url}{path}", allow_redirects=False, timeout=30)
+        assert public.status_code == 200 and "setup" not in public.text.lower(), (
+            f"anonymous GET {path} on the running knot: {public.status_code}: {public.text[:500]}"
+        )
 
     # Owner identity and knot state live in the app data dir, so they survive redeploys.
     assert (stack.data_dir / "owner-did").read_text().strip() == OWNER_DID
