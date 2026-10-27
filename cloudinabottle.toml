@@ -40,7 +40,7 @@ health_check = "/_healthz"
 # git access.  The knot enforces its own auth (ATProto DID + SSH keys
 # for push; service-auth JWTs for privileged XRPC); anonymous HTTP is
 # read-only, exactly as on tangled.org's own knots.
-public_paths = ["/"]
+public_paths = []  # TEMP
 
 [resources]
 # The knot is a lightweight Go service (git plumbing + a SQLite
