@@ -50,6 +50,17 @@ mkdir -p "$REPO_DIR" "$KEYS_DIR"
 # The knot runs as the git user; it must own its data.
 chown -R git:git "$REPO_DIR" "$PERSIST" 2>/dev/null || true
 
+# sshd's AuthorizedKeysCommand (sshd_tangled.conf) runs `knot keys` with
+# -git-dir /home/git/repositories, and sshd config can't read env vars,
+# so point that path at the persistent repo dir.  Without this, SSH
+# push/fetch look in the image's empty directory.
+GIT_HOME_REPOS=/home/git/repositories
+if [[ -d "$GIT_HOME_REPOS" && ! -L "$GIT_HOME_REPOS" ]]; then
+    rmdir "$GIT_HOME_REPOS"
+fi
+ln -sfn "$REPO_DIR" "$GIT_HOME_REPOS"
+chown -h git:git "$GIT_HOME_REPOS"
+
 # ----------------------------------------------------------------------
 # Owner DID
 # ----------------------------------------------------------------------
