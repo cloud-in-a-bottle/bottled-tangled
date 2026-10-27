@@ -31,10 +31,14 @@
 # ---- build stage: compile the knot binary --------------------------------
 FROM golang:1.25-alpine AS builder
 ENV CGO_ENABLED=1
-ARG KNOT_TAG=v1.16.1-alpha
+# v1.16.1-alpha.  Fetched by commit, not tag, so a moved tag can't
+# change what we build.
+ARG KNOT_REF=1d379a324497da39a27e49453c72615607a9b199
 WORKDIR /app
 RUN apk add --no-cache git gcc musl-dev
-RUN git clone -b ${KNOT_TAG} https://tangled.org/@tangled.org/core . \
+RUN git init -q . \
+ && git fetch --depth 1 https://tangled.org/@tangled.org/core ${KNOT_REF} \
+ && git checkout -q FETCH_HEAD \
  && go build -o /usr/bin/knot -ldflags '-s -w -extldflags "-static"' ./cmd/knot
 
 # ---- runtime stage --------------------------------------------------------

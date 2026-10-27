@@ -151,7 +151,7 @@ No passwords or long-lived secrets are written to disk.
   microVMs and is out of scope for a single Cloud in a Bottle container. Repos,
   issues, and pull requests all work without it.
 - **Alpha software.** Tangled is alpha; the knot protocol still changes
-  between releases (see the pinned `KNOT_TAG` in the Dockerfile).
+  between releases (see the pinned `KNOT_REF` commit in the Dockerfile).
 - **Web UI is the AppView's.** This app is the git backend; you browse
   and manage repos through `tangled.org` (or any AppView), which
   federates with your knot.
