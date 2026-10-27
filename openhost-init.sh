@@ -63,7 +63,7 @@ chown -R git:git "$REPO_DIR" "$PERSIST" 2>/dev/null || true
 OWNER_DID_FILE="$PERSIST/owner-did"
 OWNER_DID="${KNOT_OWNER_DID:-${KNOT_SERVER_OWNER:-${OWNER:-}}}"
 
-if false; then  # TEMP: ignore the saved owner DID
+if [[ -z "$OWNER_DID" && -f "$OWNER_DID_FILE" ]]; then
     OWNER_DID="$(head -n1 "$OWNER_DID_FILE" | tr -d '[:space:]')"
 fi
 
