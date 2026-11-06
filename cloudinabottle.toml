@@ -1,6 +1,6 @@
 [app]
 name = "tangled"
-version = "0.1.0"
+version = "1.0.0"
 description = "Self-hosted Tangled knot: the git data server for Tangled (tangled.org), the AT-Protocol-based social coding platform. Host your own repositories and federate with the Tangled network — the AppView provides the web UI, issues and pull requests as ATProto records, while your knot holds the actual git data. Identity is your ATProto/Bluesky DID; set KNOT_OWNER_DID to get started."
 authors = ["Andrew Laack <andrew@laack.co>"]
 
@@ -8,6 +8,9 @@ authors = ["Andrew Laack <andrew@laack.co>"]
 # auth_proxy listens on 8080 (the OpenHost-routed HTTP port) and
 # forwards to the knot on loopback 127.0.0.1:5555.
 image = "Dockerfile"
+# Cloud in a Bottle pulls this signed prebuilt image (built from the release tag's commit by CI) instead of building
+# `image`. If you fork this app and change it, comment this line out so your instance builds `image` instead.
+prebuilt_image = "registry.cloudinabottle.org/bottled-tangled"
 port = 8080
 
 [[ports]]

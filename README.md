@@ -56,6 +56,11 @@ Bundled:
 > for a manual deploy, setting `KNOT_OWNER_DID` in the environment takes
 > precedence over the form.
 
+`cloudinabottle.toml` sets `prebuilt_image`, so Cloud in a Bottle pulls our
+signed prebuilt image (built by CI from each release tag) instead of building
+the Dockerfile. To fork and modify this app, comment out `prebuilt_image` so
+your instance builds from source.
+
 ### Cloning and pushing
 
 - **Clone/fetch (HTTPS):**
