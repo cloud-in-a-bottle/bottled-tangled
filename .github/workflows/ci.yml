@@ -8,6 +8,9 @@ on:
 jobs:
   test:
     uses: cloud-in-a-bottle/app-template/.github/workflows/app-test.yml@main
+    with:
+      # The image builds the Rust knot from source (~20-40 min on a runner), then two stacks deploy from the cache.
+      timeout-minutes: 90
 
   image:
     needs: test

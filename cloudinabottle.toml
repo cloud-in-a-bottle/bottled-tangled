@@ -1,7 +1,7 @@
 [app]
 name = "tangled"
-version = "1.0.0"
-description = "Self-hosted Tangled knot: the git data server for Tangled (tangled.org), the AT-Protocol-based social coding platform. Host your own repositories and federate with the Tangled network — the AppView provides the web UI, issues and pull requests as ATProto records, while your knot holds the actual git data. Identity is your ATProto/Bluesky DID; set KNOT_OWNER_DID to get started."
+version = "2.0.0"
+description = "Self-hosted Tangled knot: the git data server for Tangled (tangled.org), the AT-Protocol-based social coding platform. Host your own repositories and federate with the Tangled network — the AppView provides the web UI, while your knot holds your git data, issues, pull requests and collaborators. Identity is your ATProto/Bluesky DID; set KNOT_OWNER_DID to get started."
 authors = ["Andrew Laack <andrew@laack.co>"]
 
 [runtime.container]
@@ -14,12 +14,12 @@ prebuilt_image = "registry.cloudinabottle.org/bottled-tangled"
 port = 8080
 
 [[ports]]
-# git push is only supported over SSH (the knot rejects HTTP pushes).
-# Expose the container's sshd on a dedicated host port so users can
-# push with:  git remote set-url --push origin git@<zone-host>:<port>/...
-# Auth is by the pusher's ATProto-registered SSH keys (the knot's
-# `knot keys` AuthorizedKeysCommand fetches them from the AppView); no
-# knot-local accounts.  9422 is in the manifest's 9000-9999 range.
+# git push goes over SSH.  The knot's built-in SSH server listens on
+# the container's port 22; expose it on a dedicated host port so users
+# can push with:  git remote set-url --push origin ssh://git@<zone-host>:<port>/<repo-did>
+# Auth is by the SSH keys each user publishes on their PDS (the knot
+# reads them live); no knot-local accounts.  9422 is in the manifest's
+# 9000-9999 range.
 label = "git-ssh"
 container_port = 22
 host_port = 9422
@@ -27,8 +27,8 @@ host_port = 9422
 [routing]
 # The knot's HTTP readiness is decoupled from OpenHost's probe: the
 # auth_proxy answers /_healthz locally the moment it binds, so the
-# container is marked alive even while the knot (a Go service) and its
-# DB warm up, or before the owner DID is configured.
+# container is marked alive even while the knot builds its index, or
+# before the owner DID is configured.
 health_check = "/_healthz"
 
 # The whole app is public.  Every HTTP surface the knot exposes is
@@ -37,8 +37,9 @@ health_check = "/_healthz"
 #   * git-over-HTTP clone/fetch  (/<did>/<repo>/info/refs, git-upload-pack)
 #   * ATProto XRPC federation API (/xrpc/*) — the AppView and other
 #     knots/clients call these to verify and sync your repos.
-#   * /events — the git oplog WebSocket the AppView subscribes to.
-#   * / — the knot's MOTD.
+#   * /xrpc/com.atproto.sync.subscribeRepos — the event stream WebSocket
+#     the AppView and indexers subscribe to.
+#   * / — the knot's homepage.
 # Gating any of these behind OpenHost login would break federation and
 # git access.  The knot enforces its own auth (ATProto DID + SSH keys
 # for push; service-auth JWTs for privileged XRPC); anonymous HTTP is
@@ -46,24 +47,26 @@ health_check = "/_healthz"
 public_paths = ["/"]
 
 [resources]
-# The knot is a lightweight Go service (git plumbing + a SQLite
-# metadata DB + sshd).  It is not memory-hungry; 1 GiB / 1 CPU is
+# The knot is a lightweight Rust service (git plumbing + a built-in SSH
+# server; it sizes its caches from the cgroup memory limit).  It is not memory-hungry; 1 GiB / 1 CPU is
 # comfortable for a personal/small-team knot.  Bump memory if you host
 # very large repositories (git pack operations are the main load).
 memory_mb = 1024
-# Measured clean --no-cache build peak ~4528 MiB (4.42 GiB), from a Go
-# build in the builder stage. Runtime memory_mb (1024) is lower, so
-# without an explicit build cap the build can OOM. Sized to the measured
-# peak rounded up to the next 0.5 GiB.
+# The builder stage compiles the Rust knot (cargo, 4 jobs on a 4-CPU
+# machine): compiler and linker RSS peaked at ~2.8 GiB in a clean build
+# (~15 min).  Runtime memory_mb (1024) is lower, so without an explicit
+# build cap the build would OOM; 4.5 GiB leaves headroom.
 build_memory_mb = 4608
 cpu_millicores = 1000
 
 [data]
 # Persistent state under /data/app_data/tangled/:
-#   * repositories/  — bare git repos (the durable data; back this up).
-#   * knotserver.db  — knot metadata: members, collaborators, SSH-key
-#                      cache, federation oplog cursor.
-#   * keys/          — sshd host keys, so clients' known_hosts entries
-#                      stay valid across restarts and redeploys.
+#   * knot/            — the knot's whole state: repos/ (every repo plus
+#                        its issues, PRs and ACLs; git is the database),
+#                        lfs/, sealed-keys, ssh_host_key.
+#   * knot-master-key  — KNOT_MASTER_KEY, which unseals knot/sealed-keys.
+#                        Losing it loses control of every repo's identity.
+#   * go-knot-backup/  — on installs migrated from app 1.x only: the old
+#                        Go knot's data, untouched, for rolling back.
 app_data = true
 app_temp_data = true
