@@ -2,8 +2,8 @@
 
 A knot has no browser login — identity is your ATProto DID, and all of
 its HTTP surface (git-over-HTTP clone/fetch, the XRPC federation API,
-the /events oplog WebSocket, the MOTD at /) is machine-to-machine or
-public by nature.  So this sidecar does NOT do an SSO auto-login dance.
+the event stream WebSocket at /xrpc/com.atproto.sync.subscribeRepos,
+the homepage at /) is machine-to-machine or public by nature.  So this sidecar does NOT do an SSO auto-login dance.
 Its jobs are:
 
   * Serve ``/_healthz`` locally with a static 200 so OpenHost's
@@ -16,8 +16,13 @@ Its jobs are:
     the ``OPENHOST_TANGLED_SENTINEL_NO_OWNER`` env var written by
     openhost-init.sh.
 
+  * When something stops the knot from starting (a failed migration
+    from the Go knot, a missing master key), serve an error page: the
+    owner sees the reason, everyone else a plain 503.  Controlled by
+    ``OPENHOST_TANGLED_SENTINEL_FAILED``, which holds the reason.
+
   * Otherwise transparently forward everything to the knot on
-    127.0.0.1:5555, including the ``/events`` WebSocket (tunnelled) and
+    127.0.0.1:5555, including the event stream WebSocket (tunnelled) and
     git-over-HTTP requests (buffered, then re-sent with a correct
     Content-Length; capped at MAX_BODY_BYTES).
 
@@ -139,7 +144,7 @@ def _setup_html(hostname: str, is_owner: bool, error: str = "", username: str = 
             "<button type=\"submit\">Save & start knot</button>"
             "</form></div>"
             "<p class=\"muted\">After saving, the knot restarts and this page "
-            "becomes your knot's MOTD. Then add the knot at "
+            "becomes your knot's homepage. Then add the knot at "
             "<a href=\"https://tangled.org/settings/knots\">tangled.org → Settings → "
             f"Knots</a> (domain <code>{safe}</code>) and click <b>verify</b> to "
             "federate it.</p>"
@@ -160,6 +165,27 @@ def _setup_html(hostname: str, is_owner: bool, error: str = "", username: str = 
     ).encode("utf-8")
 
 
+def _blocked_html(reason: str, is_owner: bool) -> bytes:
+    if is_owner:
+        body_inner = (
+            "<h1>Your Tangled knot can't start</h1>"
+            f"<p class=\"err\">{_esc(reason)}</p>"
+            "<p>The app's logs have the details. Restart the app once it's "
+            "fixed; the knot starts as soon as nothing blocks it.</p>"
+        )
+    else:
+        body_inner = (
+            "<h1>Tangled knot — temporarily unavailable</h1>"
+            "<p>This knot is down for maintenance. Please try again later.</p>"
+        )
+    return (
+        "<!doctype html><html><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+        f"<title>Tangled knot — unavailable</title>{_STYLE}</head><body>"
+        f"{body_inner}</body></html>"
+    ).encode("utf-8")
+
+
 def _saved_html(hostname: str) -> bytes:
     safe = _esc(hostname or "your-knot-domain")
     return (
@@ -170,7 +196,7 @@ def _saved_html(hostname: str) -> bytes:
         f"{_STYLE}</head><body>"
         "<h1>Owner DID saved — starting your knot…</h1>"
         "<p>The knot is (re)starting with your identity. This page refreshes "
-        "automatically; in a few seconds it will become your knot's MOTD.</p>"
+        "automatically; in a few seconds it will become your knot's homepage.</p>"
         "<div class=\"box\"><p>Next: add this knot at "
         "<a href=\"https://tangled.org/settings/knots\">tangled.org → Settings → "
         f"Knots</a> (domain <code>{safe}</code>) and click <b>verify</b> to "
@@ -183,6 +209,7 @@ class KnotProxyHandler(BaseHTTPRequestHandler):
     upstream_host: str = "127.0.0.1"
     upstream_port: int = 5555
     sentinel_no_owner: str = ""
+    sentinel_failed: str = ""
     knot_hostname: str = ""
     owner_did_file: str = ""
     owner_username: str = "owner"
@@ -223,6 +250,17 @@ class KnotProxyHandler(BaseHTTPRequestHandler):
     def _owner_missing(self) -> bool:
         return bool(self.sentinel_no_owner) and os.path.exists(self.sentinel_no_owner)
 
+    def _blocked_reason(self) -> str | None:
+        if not self.sentinel_failed:
+            return None
+        try:
+            with open(self.sentinel_failed, encoding="utf-8") as fh:
+                return fh.read().strip() or "unknown error"
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            return f"unreadable reason file: {exc}"
+
     def _is_owner(self) -> bool:
         return self.headers.get(OWNER_HEADER_NAME, "").lower() == "true"
 
@@ -242,6 +280,13 @@ class KnotProxyHandler(BaseHTTPRequestHandler):
         # while the knot is unconfigured.
         if path == SET_OWNER_PATH:
             self._handle_set_owner()
+            return
+
+        # Something blocks the knot from starting: say so, with the reason
+        # for the owner only (it names paths in the data dir).
+        reason = self._blocked_reason()
+        if reason is not None:
+            self._send_html(503, _blocked_html(reason, is_owner=self._is_owner()))
             return
 
         # If the owner DID isn't configured, the knot isn't running.
@@ -265,7 +310,7 @@ class KnotProxyHandler(BaseHTTPRequestHandler):
                 self._safe_send_error(503, "knot not configured: set owner DID")
             return
 
-        # WebSocket (/events) → tunnel.
+        # WebSocket (the event stream at /xrpc/com.atproto.sync.subscribeRepos) → tunnel.
         upgrade = self.headers.get("Upgrade", "").lower().strip()
         if upgrade == "websocket":
             self._proxy_websocket()
@@ -605,6 +650,9 @@ def main() -> int:
     KnotProxyHandler.upstream_port = upstream_port
     KnotProxyHandler.sentinel_no_owner = os.environ.get(
         "OPENHOST_TANGLED_SENTINEL_NO_OWNER", ""
+    ).strip()
+    KnotProxyHandler.sentinel_failed = os.environ.get(
+        "OPENHOST_TANGLED_SENTINEL_FAILED", ""
     ).strip()
     KnotProxyHandler.knot_hostname = os.environ.get(
         "OPENHOST_TANGLED_HOSTNAME", ""

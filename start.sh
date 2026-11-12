@@ -2,26 +2,28 @@
 # openhost-tangled supervisor.
 #
 # Boot order:
-#   1. openhost-init.sh  — resolve hostname/owner, lay out persistent
-#      dirs, generate sshd host keys, write the env file.
+#   1. openhost-init.sh  — resolve hostname/owner, generate the master
+#      key on first boot, migrate Go-knot data once, write the knot's
+#      config and the env file.
 #   2. auth_proxy.py     — the public HTTP seam on 0.0.0.0:8080: serves
-#      /_healthz locally, serves a setup page when the owner DID is
-#      missing, and otherwise transparently forwards to the knot on
-#      127.0.0.1:5555.  Always started (so OpenHost sees a healthy
-#      container and the operator gets a helpful page) even if the knot
-#      itself can't start yet.
-#   3. sshd              — git push transport (only started once the
-#      owner DID is set; without repos there's nothing to push to).
-#   4. knot server       — the git data server + XRPC federation, on
-#      loopback :5555 / internal :5444, as the git user.  Only started
-#      when the owner DID is set.
+#      /_healthz locally, serves the setup page while the owner DID is
+#      missing (or an error page if the knot can't start), and
+#      otherwise forwards to the knot on 127.0.0.1:5555.  Always started
+#      so OpenHost sees a healthy container and the operator gets a
+#      helpful page, even if the knot itself can't start.
+#   3. knot-server       — git over HTTP and SSH, XRPC, the event
+#      stream, as the git user.  Only started when the owner DID is set
+#      and nothing blocks it.
 #
-# If any started long-running process exits, tear the container down so
+# If either long-running process exits, tear the container down so
 # OpenHost restarts it.
 
 set -uo pipefail
 
-/opt/openhost-tangled/openhost-init.sh
+if ! /opt/openhost-tangled/openhost-init.sh; then
+    echo "[start] openhost-init.sh failed; see above. Exiting so the app restarts."
+    exit 1
+fi
 
 # shellcheck disable=SC1091
 . /etc/environment-openhost-tangled
@@ -30,40 +32,41 @@ set -uo pipefail
 python3 /opt/openhost-tangled/auth_proxy.py &
 PROXY_PID=$!
 
-if [[ -f "${OPENHOST_TANGLED_SENTINEL_NO_OWNER}" ]]; then
-    echo "[start] KNOT_OWNER_DID not set — knot/sshd NOT started."
-    echo "[start] Open the app URL for setup instructions, set KNOT_OWNER_DID, and reload."
-    # Keep the container alive on just the proxy so the setup page is
+proxy_only() {
+    # Keep the container alive on just the proxy so its page is
     # reachable; if the proxy dies, exit so OpenHost restarts us.
     wait "$PROXY_PID"
     echo "[start] auth_proxy exited; shutting down"
     exit 1
+}
+
+if [[ -f "${OPENHOST_TANGLED_SENTINEL_FAILED}" ]]; then
+    echo "[start] knot NOT started: $(cat "${OPENHOST_TANGLED_SENTINEL_FAILED}")"
+    proxy_only
+fi
+if [[ -f "${OPENHOST_TANGLED_SENTINEL_NO_OWNER}" ]]; then
+    echo "[start] owner DID not set — knot NOT started."
+    echo "[start] Open the app URL while signed in to set it."
+    proxy_only
 fi
 
-# Start sshd (foreground child) for git push.
-/usr/sbin/sshd -D -e &
-SSHD_PID=$!
-
-# Start the knot server as the git user.
-su-exec git env \
-    KNOT_SERVER_HOSTNAME="${KNOT_SERVER_HOSTNAME}" \
-    KNOT_SERVER_OWNER="${KNOT_SERVER_OWNER}" \
-    KNOT_SERVER_LISTEN_ADDR="${KNOT_SERVER_LISTEN_ADDR}" \
-    KNOT_SERVER_INTERNAL_LISTEN_ADDR="${KNOT_SERVER_INTERNAL_LISTEN_ADDR}" \
-    KNOT_SERVER_DB_PATH="${KNOT_SERVER_DB_PATH}" \
-    KNOT_REPO_SCAN_PATH="${KNOT_REPO_SCAN_PATH}" \
-    KNOT_GIT_USER_NAME="${KNOT_GIT_USER_NAME}" \
-    KNOT_GIT_USER_EMAIL="${KNOT_GIT_USER_EMAIL}" \
-    APPVIEW_ENDPOINT="${APPVIEW_ENDPOINT}" \
-    /usr/bin/knot server &
+# Start the knot as the git user.  It listens for SSH on container port
+# 22 (the manifest's [[ports]] maps it to the host), so it keeps just
+# CAP_NET_BIND_SERVICE as an ambient capability.  The master key goes in
+# the environment only, never into a world-readable file.
+# NO_COLOR keeps ANSI colour codes out of the app logs.
+NO_COLOR=1 KNOT_MASTER_KEY="$(cat "${OPENHOST_TANGLED_MASTER_KEY_FILE}")" \
+    setpriv --reuid=git --regid=git --clear-groups \
+        --inh-caps=-all,+net_bind_service --ambient-caps=+net_bind_service \
+        /usr/local/bin/knot-server --config /etc/knot/config.toml &
 KNOT_PID=$!
 
-echo "[start] proxy=${PROXY_PID} sshd=${SSHD_PID} knot=${KNOT_PID}"
+echo "[start] proxy=${PROXY_PID} knot=${KNOT_PID}"
 
-# If any of the three exits, bring the whole container down.
-wait -n "$PROXY_PID" "$SSHD_PID" "$KNOT_PID"
+# If either exits, bring the whole container down.
+wait -n "$PROXY_PID" "$KNOT_PID"
 CODE=$?
 echo "[start] a child exited (code ${CODE}); shutting down"
-kill "$PROXY_PID" "$SSHD_PID" "$KNOT_PID" 2>/dev/null
+kill "$PROXY_PID" "$KNOT_PID" 2>/dev/null
 wait 2>/dev/null
 exit "$CODE"

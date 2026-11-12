@@ -3,70 +3,70 @@
 # A Tangled "knot" — the self-hostable git data server for Tangled
 # (https://tangled.org), the AT-Protocol-based social coding platform.
 #
-# A knot stores your git repositories and federates with a Tangled
-# AppView (tangled.org by default): the AppView provides the web UI,
-# social graph, issues and pull-requests as ATProto records, while the
-# knot holds the actual git data and serves it.  It is NOT a website
-# you log into — identity is your ATProto DID (e.g. your Bluesky
-# account), and there is no knot-local account system.
+# A knot stores your git repositories, and since v1.20.0 also their
+# issues, pull requests, comments and collaborators, and federates with
+# a Tangled AppView (tangled.org by default), which provides the web UI.
+# It is NOT a website you log into — identity is your ATProto DID (e.g.
+# your Bluesky account), and there is no knot-local account system.
+#
+# Since v1.20.0 upstream ships only the Rust knot ("knot2"): one
+# binary, `knot-server`, with no database (git is the store, plus a key
+# file sealed with KNOT_MASTER_KEY) and its own in-process SSH server,
+# so there is no sshd, AuthorizedKeysCommand or unix git account any
+# more.  `knot-migrate` converts the old Go knot's data offline;
+# openhost-init.sh runs it on the first boot of an install that has
+# Go-knot data.
 #
 # Transports the knot exposes:
-#   * HTTP (:5555) — git clone/fetch over HTTP, the ATProto XRPC API
-#     used for federation, a /events oplog WebSocket, and a MOTD at /.
-#     Git PUSH is NOT allowed over HTTP (the knot returns "Pushes are
-#     only supported over SSH").
-#   * SSH  (:22)   — git push, authenticated by SSH keys that the knot
-#     fetches from the AppView for the pushing user's DID (via
-#     `knot keys` as sshd's AuthorizedKeysCommand).
+#   * HTTP (:5555, loopback) — git clone/fetch over HTTP, the XRPC API
+#     used for federation, the event stream WebSocket at
+#     /xrpc/com.atproto.sync.subscribeRepos, and a homepage at /.
+#   * SSH (:22) — git push/fetch, authenticated by the SSH keys each
+#     user publishes on their PDS (the knot reads them live).
 #
 # On OpenHost we route HTTP through the normal app URL (public, since
 # git/federation are machine-to-machine and can't do browser SSO) and
 # expose SSH on a dedicated host port via the manifest's [[ports]].
-#
-# We build the `knot` binary from source (a static CGO Go build, the
-# same approach the community knot-docker uses) and supervise sshd +
-# the knot server with a small bash script (no s6 — bash + `wait -n`
-# is the OpenHost-preferred, rootless-podman-friendly approach).
 
-# ---- build stage: compile the knot binary --------------------------------
-FROM golang:1.25-alpine AS builder
-ENV CGO_ENABLED=1
-# v1.16.1-alpha.  Fetched by commit, not tag, so a moved tag can't
-# change what we build.
-ARG KNOT_REF=1d379a324497da39a27e49453c72615607a9b199
-WORKDIR /app
-RUN apk add --no-cache git gcc musl-dev
+# ---- build stage: compile knot-server and knot-migrate --------------------
+# Mirrors upstream's knot2/Containerfile.
+FROM docker.io/library/rust:1.96-slim-trixie AS builder
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates build-essential cmake perl pkg-config clang mold git \
+    && rm -rf /var/lib/apt/lists/*
+ENV RUSTFLAGS="-C linker=clang -C link-arg=-fuse-ld=mold"
+# cargo's built-in git client is very slow on the tangled.org-hosted git
+# dependencies (pinned by rev in Cargo.lock); the git CLI is quick.
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
+# v1.20.0.  Fetched by commit, not tag, so a moved tag can't change
+# what we build.
+ARG KNOT_REF=2096d06d938e680297adeadd71b8320c9f3491d4
+WORKDIR /src
 RUN git init -q . \
  && git fetch --depth 1 https://tangled.org/@tangled.org/core ${KNOT_REF} \
- && git checkout -q FETCH_HEAD \
- && go build -o /usr/bin/knot -ldflags '-s -w -extldflags "-static"' ./cmd/knot
+ && git checkout -q FETCH_HEAD
+RUN cargo build --release --locked --package knot-server --package knot-migrate
+RUN strip target/release/knot-server target/release/knot-migrate
 
 # ---- runtime stage --------------------------------------------------------
-FROM alpine:3.20
+FROM docker.io/library/debian:trixie-slim
 
-# git + openssh for the SSH push path; python3 for the health/landing
-# sidecar; su-exec to drop privileges to the git user; bash for start.sh;
-# curl/ca-certificates for outbound federation calls to the AppView/PDS.
-RUN apk add --no-cache \
-      git openssh openssh-server \
-      python3 bash curl ca-certificates su-exec shadow
+# python3 for the health/setup/forward proxy; ca-certificates for the
+# knot's outbound calls (PLC directory, PDSes, AppView, relays).
+# setpriv (util-linux, in the base image) drops the knot to the git user.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      python3 ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-# The knot stores and serves repositories as the unprivileged `git`
-# user.  UID/GID 1000 matches the community image's default.
+# The knot runs as the unprivileged `git` user (uid/gid 1000, as
+# upstream's image), which owns its data.
 ARG UID=1000
 ARG GID=1000
-RUN addgroup -g ${GID} git \
- && adduser -u ${UID} -G git -D -h /home/git git \
- && mkdir -p /home/git/repositories \
- && chown -R git:git /home/git
+RUN groupadd -g ${GID} git \
+ && useradd -u ${UID} -g git -M -d /nonexistent -s /usr/sbin/nologin git
 
-COPY --from=builder /usr/bin/knot /usr/bin/knot
-
-# sshd config: host keys live on the persistent volume (generated on
-# first boot by start.sh), password auth off, and git pushes are
-# authorized by `knot keys` (fetches the pusher's SSH keys from the
-# AppView by DID).  git-dir is the persistent repositories path.
-COPY sshd_tangled.conf /etc/ssh/sshd_config.d/tangled.conf
+COPY --from=builder /src/target/release/knot-server  /usr/local/bin/knot-server
+COPY --from=builder /src/target/release/knot-migrate /usr/local/bin/knot-migrate
 
 COPY start.sh          /opt/openhost-tangled/start.sh
 COPY auth_proxy.py     /opt/openhost-tangled/auth_proxy.py
@@ -77,7 +77,8 @@ RUN chmod 0755 /opt/openhost-tangled/start.sh \
 
 # 8080 = auth_proxy (the OpenHost-routed HTTP port, forwards to the
 #        knot on loopback :5555).
-# 22   = sshd for git push (exposed on the host via manifest [[ports]]).
+# 22   = the knot's built-in SSH server (exposed on the host via the
+#        manifest's [[ports]]).
 EXPOSE 8080
 EXPOSE 22
 
