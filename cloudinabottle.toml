@@ -1,6 +1,7 @@
 [app]
 name = "tangled"
-version = "1.0.0"
+version = "1.0.1"
+release_tag_format = "semver"
 description = "Self-hosted Tangled knot: the git data server for Tangled (tangled.org), the AT-Protocol-based social coding platform. Host your own repositories and federate with the Tangled network — the AppView provides the web UI, issues and pull requests as ATProto records, while your knot holds the actual git data. Identity is your ATProto/Bluesky DID; set KNOT_OWNER_DID to get started."
 authors = ["Andrew Laack <andrew@laack.co>"]
 
